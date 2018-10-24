@@ -186,6 +186,25 @@ def build_validation_result(is_valid, violated_slot, message_content):
 
 
 """ --- Functions that control the bot's behavior --- """
+def help(intent_request):
+    examples = [
+        "  * What movies are out right now?",
+        "  * What movies are playing near 85721?",
+        "  * Where is _movie_ playing?",
+        "  * Tell me when _movie_ is showing at _theater_",
+        "  * How long is _movie_?",
+        "  * What is _movie_ rated?"
+    ]
+    output_session_attributes = intent_request['sessionAttributes']
+    content = "You can ask me for information about when and where movies are playing, as well as for basic info on current movies. Here are some examples of things you can ask me:\n%s" % "\n".join(examples)
+    return close(
+        output_session_attributes,
+        'Fulfilled',
+        {
+            'contentType': 'PlainText',
+            'content': content
+        }
+    )
 
 def get_movie_detail(intent_request):
     """
@@ -457,16 +476,42 @@ def get_theater_movies(intent_request):
     r = requests.get('http://data.tmsapi.com/v1.1/movies/showings', params={'startDate': start_date, 'zip': zipcode, 'api_key': os.environ['TMS_API_KEY']})
     if r.status_code == 200 and r.text:
         movies = r.json()
+        prob = 0
+        best_sim = 0
+        best_theater = ''
+        # determine best theater name match
         for m in movies:
             for s in m['showtimes']:
-                if similar(s['theatre']['name'].lower().strip(), theater_name.lower().strip()):
+                prob = similar(s['theatre']['name'].lower().strip(), theater_name.lower().strip())
+                if prob >= 0.5:
+                    if prob > best_sim:
+                        best_sim = prob
+                        best_theater = s['theatre']['name']
+        # find movies at theater
+        for m in movies:
+            for s in m['showtimes']:
+                if s['theatre']['name'] == best_theater:
                     if m['title'] in movies_list:
                         continue
                     else:
                         movies_list.append(m['title'])
     if len(movies_list) > 0:
-        movies_list_text = "\n".join(["* %s" % m for m in movies_list])
-        content = "Currently showing at *%s*:\n%s" % (theater_name, movies_list_text)
+        movie_opts = []
+        for m in movies_list:
+            movie_opts.append({
+                'text': m,
+                'value': 'When is theater %s showing film %s' % (best_theater, m)
+            })
+        return elicit_intent(
+            output_session_attributes,
+            'FindShowtimes',
+            {'contentType': 'PlainText', 'content': 'Currently showing at *%s*:' % best_theater},
+            build_response_card(
+                'Now showing',
+                'Select a movie to see showtimes',
+                movie_opts
+            )
+        )
     else:
         content = "I'm sorry, I can't find any movies showing at *%s*" % theater_name
     return close(
@@ -577,6 +622,8 @@ def dispatch(intent_request):
         return get_showtimes(intent_request)
     if intent_name == 'GetMovieDetail':
         return get_movie_detail(intent_request)
+    if intent_name == 'GetHelp':
+        return help(intent_request)
     raise Exception('Intent with name ' + intent_name + ' not supported')
 
 
