@@ -1,19 +1,12 @@
 """
  This code sample demonstrates an implementation of the Lex Code Hook Interface
- in order to serve a bot which manages dentist appointments.
- Bot, Intent, and Slot models which are compatible with this sample can be found in the Lex Console
- as part of the 'MakeAppointment' template.
-
- For instructions on how to set up and test this bot, as well as additional samples,
- visit the Lex Getting Started documentation http://docs.aws.amazon.com/lex/latest/dg/getting-started.html.
+ in order to serve a bot which allows users to get movie times, locations and information.
 """
 
 import json
 import os
 import re
 import arrow
-import dateutil.parser
-import datetime
 import logging
 import requests
 from difflib import SequenceMatcher
@@ -104,6 +97,7 @@ def build_response_card(title, subtitle, options):
     Build one or more responseCards with a title, subtitle, and an optional set of options which should be displayed as buttons.
     """
     attachments = []
+    # Lex permits max 5 buttons per card
     cnt = int(len(options) / 5)
     if (len(options) % 5) > 0:
         cnt = cnt + 1
@@ -134,42 +128,6 @@ def build_response_card(title, subtitle, options):
 """ --- Helper Functions --- """
 
 
-def parse_int(n):
-    try:
-        return int(n)
-    except ValueError:
-        return float('nan')
-
-
-def try_ex(func):
-    """
-    Call passed in function in try block. If KeyError is encountered return None.
-    This function is intended to be used to safely access dictionary.
-
-    Note that this function would have negative impact on performance.
-    """
-
-    try:
-        return func()
-    except KeyError:
-        return None
-
-
-def increment_time_by_thirty_mins(time):
-    hour, minute = map(int, time.split(':'))
-    return '{}:00'.format(hour + 1) if minute == 30 else '{}:30'.format(hour)
-
-
-def get_random_int(minimum, maximum):
-    """
-    Returns a random integer between min (included) and max (excluded)
-    """
-    min_int = math.ceil(minimum)
-    max_int = math.floor(maximum)
-
-    return random.randint(min_int, max_int - 1)
-
-
 def similar(a, b):
     """
     Help function which returns probability if 2 strings are similar (using difflib)
@@ -185,11 +143,36 @@ def build_validation_result(is_valid, violated_slot, message_content):
     }
 
 
+def validate_zipcode(slots, output_session_attributes):
+    # check if zipcode in session attrs or request slots, and if it is valid
+    zipcode = None
+    if not output_session_attributes:
+        output_session_attributes = {}
+    if 'zipcode' in slots and slots['zipcode']:
+        zipcode = slots['zipcode']
+    elif output_session_attributes and 'zipcode' in output_session_attributes:
+        zipcode = output_session_attributes['zipcode']
+    if zipcode:
+        # check format of zipcode
+        zipcode_match = re.search('^(\d{5})([- ])?(\d{4})?$', zipcode)
+        if zipcode_match:
+            zipcode = zipcode_match.group(1)
+            output_session_attributes['zipcode'] = zipcode
+        else:
+            zipcode = False
+    return [zipcode, output_session_attributes]
+
+
 """ --- Functions that control the bot's behavior --- """
+
+
 def help(intent_request):
+    """
+    Returns help information and examples for bot
+    """
     examples = [
         "  * What movies are out right now?",
-        "  * What movies are playing near 85721?",
+        "  * What movies are playing near _zipcode_?",
         "  * Where is _movie_ playing?",
         "  * Tell me when _movie_ is showing at _theater_",
         "  * How long is _movie_?",
@@ -225,6 +208,7 @@ def get_movie_detail(intent_request):
     if r.status_code == 200 and r.text:
         results = r.json()
         best_sim = 0
+        # find closest match to provided movie title
         for m in results['results']:
             prob = similar(m['title'].lower().strip(), movie_title.lower().strip())
             if prob >= 0.5:
@@ -267,37 +251,31 @@ def get_showtimes(intent_request):
     Performs dialog management and fulfillment for finding showtimes for a
     (movie, theater) pair.
     """
-    zipcode = None
-    movie_title = intent_request['currentIntent']['slots']['movie_title']
-    theater_name = intent_request['currentIntent']['slots']['theater_name']
-    if 'zipcode' in intent_request['currentIntent']['slots']:
-        zipcode = intent_request['currentIntent']['slots']['zipcode']
     source = intent_request['invocationSource']
-    zipcode_prompt = "What is your zip code?"
+    slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
-    if output_session_attributes is None:
-        output_session_attributes = {}
 
-    # check if zipcode in session or request
-    if zipcode is None and output_session_attributes and 'zipcode' in output_session_attributes:
-        zipcode = output_session_attributes['zipcode']
-    elif zipcode:
-        # check format of zipcode
-        zipcode_match = re.search('^(\d{5})([- ])?(\d{4})?$', zipcode)
-        if zipcode_match:
-            zipcode = zipcode_match.group(1)
-            output_session_attributes['zipcode'] = zipcode
+    # perform slot validation
+    if source == 'DialogCodeHook':
+        zipcode, output_session_attributes = validate_zipcode(slots, output_session_attributes)
+        if not zipcode:
+            if zipcode == False:
+                # user entered improperly-formatted zipcode -- need to correct
+                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+            # prompt for zipcode
+            return elicit_slot(
+                output_session_attributes,
+                intent_request['currentIntent']['name'],
+                slots,
+                'zipcode'
+            )
         else:
-            zipcode_prompt = 'Whoops! You entered an invalid zip code. What is your zip code?'
-    if zipcode is None:
-        return elicit_slot(
-            output_session_attributes,
-            intent_request['currentIntent']['name'],
-            intent_request['currentIntent']['slots'],
-            'zipcode',
-            {'contentType': 'PlainText', 'content': zipcode_prompt},
-            None
-        )
+            # delegate control back to Lex to perform intent fulfillment
+            return delegate(output_session_attributes, slots)
+
+    movie_title = slots['movie_title']
+    theater_name = slots['theater_name']
+    zipcode = output_session_attributes['zipcode']
 
     # send API request to get movie info
     start_date = arrow.utcnow().to('-07:00').format('YYYY-MM-DD')
@@ -307,6 +285,7 @@ def get_showtimes(intent_request):
         best_sim = 0
         best_title = ''
         best_theater = ''
+        # find closest match to provided movie title
         for m in movies:
             prob = similar(m['title'].lower().strip(), movie_title.lower().strip())
             if prob >= 0.5:
@@ -314,6 +293,7 @@ def get_showtimes(intent_request):
                     best_sim = prob
                     best_title = m['title']
         best_sim = 0
+        # find closest match to provided theater name
         for m in movies:
             for s in m['showtimes']:
                 prob = similar(s['theatre']['name'].lower().strip(), theater_name.lower().strip())
@@ -321,9 +301,9 @@ def get_showtimes(intent_request):
                     if prob > best_sim:
                         best_sim = prob
                         best_theater = s['theatre']['name']
-        print "*** Best Title = %s" % best_title
-        print "*** Best Theater = %s" % best_theater
         showtimes = []
+        # find showings of movies matching our best-guessed movie playing
+        # at our best-guessed theater
         for m in movies:
             if m['title'] == best_title:
                 for s in m['showtimes']:
@@ -332,7 +312,7 @@ def get_showtimes(intent_request):
 
     if len(showtimes) > 0:
         showtimes_list = "\n".join(["* %s" % t for t in showtimes])
-        content = "*%s* is showing at %s at the following times:\n%s" % (best_title, best_theater, showtimes_list)
+        content = "*%s* is showing at %s at the following times:\n```%s```" % (best_title, best_theater, showtimes_list)
     else:
         content = "I'm sorry, I can't find any showtimes for *%s* at %s" % (best_title, best_theater)
     return close(
@@ -347,38 +327,33 @@ def get_showtimes(intent_request):
 
 def find_movie(intent_request):
     """
-    Performs dialog management and fulfillment for finding a movie.
+    Performs dialog management and fulfillment for finding a particular movie
+    playing in a zip code area.
     """
-    zipcode = None
-    movie_title = intent_request['currentIntent']['slots']['movie_title']
-    if 'zipcode' in intent_request['currentIntent']['slots']:
-        zipcode = intent_request['currentIntent']['slots']['zipcode']
     source = intent_request['invocationSource']
-    zipcode_prompt = "What is your zip code?"
+    slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
-    if output_session_attributes is None:
-        output_session_attributes = {}
 
-    # check if zipcode in session or request
-    if zipcode is None and output_session_attributes and 'zipcode' in output_session_attributes:
-        zipcode = output_session_attributes['zipcode']
-    elif zipcode:
-        # check format of zipcode
-        zipcode_match = re.search('^(\d{5})([- ])?(\d{4})?$', zipcode)
-        if zipcode_match:
-            zipcode = zipcode_match.group(1)
-            output_session_attributes['zipcode'] = zipcode
+    # perform slot validation
+    if source == 'DialogCodeHook':
+        zipcode, output_session_attributes = validate_zipcode(slots, output_session_attributes)
+        if not zipcode:
+            if zipcode == False:
+                # user entered improperly-formatted zipcode -- need to correct
+                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+            # prompt for zipcode
+            return elicit_slot(
+                output_session_attributes,
+                intent_request['currentIntent']['name'],
+                slots,
+                'zipcode'
+            )
         else:
-            zipcode_prompt = 'Whoops! You entered an invalid zip code. What is your zip code?'
-    if zipcode is None:
-        return elicit_slot(
-            output_session_attributes,
-            intent_request['currentIntent']['name'],
-            intent_request['currentIntent']['slots'],
-            'zipcode',
-            {'contentType': 'PlainText', 'content': zipcode_prompt},
-            None
-        )
+            # delegate control back to Lex to perform intent fulfillment
+            return delegate(output_session_attributes, slots)
+
+    movie_title = slots['movie_title']
+    zipcode = output_session_attributes['zipcode']
 
     # send API request to get movie info
     theaters = []
@@ -388,12 +363,14 @@ def find_movie(intent_request):
         movies = r.json()
         best_sim = 0
         best_title = ''
+        # find closest match to provided movie title
         for m in movies:
             prob = similar(m['title'].lower().strip(), movie_title.lower().strip())
             if prob >= 0.5:
                 if prob > best_sim:
                     best_sim = prob
                     best_title = m['title']
+        # find all theaters showing our best-matched title
         for m in movies:
             if m['title'] == best_title:
                 for s in m['showtimes']:
@@ -401,10 +378,6 @@ def find_movie(intent_request):
                         continue
                     else:
                         theaters.append(s['theatre']['name'])
-    # if len(theaters) > 0:
-    #     theater_list = "\n".join(["* %s" % t for t in theaters])
-    #     content = "*%s* is showing at the following theaters:\n%s" % (movie_title, theater_list)
-
     if len(theaters) > 0:
         theater_opts = []
         for t in theaters:
@@ -437,38 +410,32 @@ def find_movie(intent_request):
 def get_theater_movies(intent_request):
     """
     Performs dialog management and fulfillment for finding movies playing at a
-    particular theater.
+    particular theater in a zip code area.
     """
-    zipcode = None
-    theater_name = intent_request['currentIntent']['slots']['theater_name']
-    if 'zipcode' in intent_request['currentIntent']['slots']:
-        zipcode = intent_request['currentIntent']['slots']['zipcode']
     source = intent_request['invocationSource']
-    zipcode_prompt = "What is your zip code?"
+    slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
-    if output_session_attributes is None:
-        output_session_attributes = {}
 
-    # check if zipcode in session or request
-    if zipcode is None and output_session_attributes and 'zipcode' in output_session_attributes:
-        zipcode = output_session_attributes['zipcode']
-    elif zipcode:
-        # check format of zipcode
-        zipcode_match = re.search('^(\d{5})([- ])?(\d{4})?$', zipcode)
-        if zipcode_match:
-            zipcode = zipcode_match.group(1)
-            output_session_attributes['zipcode'] = zipcode
+    # perform slot validation
+    if source == 'DialogCodeHook':
+        zipcode, output_session_attributes = validate_zipcode(slots, output_session_attributes)
+        if not zipcode:
+            if zipcode == False:
+                # user entered improperly-formatted zipcode -- need to correct
+                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+            # prompt for zipcode
+            return elicit_slot(
+                output_session_attributes,
+                intent_request['currentIntent']['name'],
+                slots,
+                'zipcode'
+            )
         else:
-            zipcode_prompt = 'Whoops! You entered an invalid zip code. What is your zip code?'
-    if zipcode is None:
-        return elicit_slot(
-            output_session_attributes,
-            intent_request['currentIntent']['name'],
-            intent_request['currentIntent']['slots'],
-            'zipcode',
-            {'contentType': 'PlainText', 'content': zipcode_prompt},
-            None
-        )
+            # delegate control back to Lex to perform intent fulfillment
+            return delegate(output_session_attributes, slots)
+
+    theater_name = slots['theater_name']
+    zipcode = output_session_attributes['zipcode']
 
     # send API request to get movie info
     movies_list = []
@@ -487,7 +454,7 @@ def get_theater_movies(intent_request):
                     if prob > best_sim:
                         best_sim = prob
                         best_theater = s['theatre']['name']
-        # find movies at theater
+        # find movies at best-matched theater name
         for m in movies:
             for s in m['showtimes']:
                 if s['theatre']['name'] == best_theater:
@@ -529,37 +496,31 @@ def get_movies(intent_request):
     Performs dialog management and fulfillment for listing all movies playing in
     a zip code area.
     """
-    zipcode = None
-    if 'zipcode' in intent_request['currentIntent']['slots']:
-        zipcode = intent_request['currentIntent']['slots']['zipcode']
     source = intent_request['invocationSource']
-    zipcode_prompt = "Please tell me your 5 digit zip code and I'll provide a list of movies playing near you."
+    slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
-    if output_session_attributes is None:
-        output_session_attributes = {}
 
-    # check if zipcode in session or request
-    if zipcode is None and output_session_attributes and 'zipcode' in output_session_attributes:
-        zipcode = output_session_attributes['zipcode']
-    elif zipcode:
-        # check format of zipcode
-        zipcode_match = re.search('^(\d{5})([- ])?(\d{4})?$', zipcode)
-        if zipcode_match:
-            zipcode = zipcode_match.group(1)
-            output_session_attributes['zipcode'] = zipcode
+    # perform slot validation
+    if source == 'DialogCodeHook':
+        zipcode, output_session_attributes = validate_zipcode(slots, output_session_attributes)
+        if not zipcode:
+            if zipcode == False:
+                # user entered improperly-formatted zipcode -- need to correct
+                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+            # prompt for zipcode
+            return elicit_slot(
+                output_session_attributes,
+                intent_request['currentIntent']['name'],
+                slots,
+                'zipcode'
+            )
         else:
-            zipcode_prompt = 'Whoops! You entered an invalid zip code. What is your zip code?'
-    if zipcode is None:
-        return elicit_slot(
-            output_session_attributes,
-            intent_request['currentIntent']['name'],
-            intent_request['currentIntent']['slots'],
-            'zipcode',
-            {'contentType': 'PlainText', 'content': zipcode_prompt},
-            None
-        )
+            # delegate control back to Lex to perform intent fulfillment
+            return delegate(output_session_attributes, slots)
 
-    # send API request to get movie info
+
+    # send API request to get movie showings
+    zipcode = output_session_attributes['zipcode']
     movies_list = []
     start_date = arrow.utcnow().to('-07:00').format('YYYY-MM-DD')
     r = requests.get('http://data.tmsapi.com/v1.1/movies/showings', params={'startDate': start_date, 'zip': zipcode, 'api_key': os.environ['TMS_API_KEY']})
