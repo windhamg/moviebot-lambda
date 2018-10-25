@@ -261,7 +261,14 @@ def get_showtimes(intent_request):
         if not zipcode:
             if zipcode == False:
                 # user entered improperly-formatted zipcode -- need to correct
-                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                validation_result = build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                return elicit_slot(
+                    output_session_attributes,
+                    intent_request['currentIntent']['name'],
+                    slots,
+                    validation_result['violatedSlot'],
+                    validation_result['message']
+                )
             # prompt for zipcode
             return elicit_slot(
                 output_session_attributes,
@@ -340,7 +347,14 @@ def find_movie(intent_request):
         if not zipcode:
             if zipcode == False:
                 # user entered improperly-formatted zipcode -- need to correct
-                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                validation_result = build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                return elicit_slot(
+                    output_session_attributes,
+                    intent_request['currentIntent']['name'],
+                    slots,
+                    validation_result['violatedSlot'],
+                    validation_result['message']
+                )
             # prompt for zipcode
             return elicit_slot(
                 output_session_attributes,
@@ -422,7 +436,14 @@ def get_theater_movies(intent_request):
         if not zipcode:
             if zipcode == False:
                 # user entered improperly-formatted zipcode -- need to correct
-                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                validation_result = build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                return elicit_slot(
+                    output_session_attributes,
+                    intent_request['currentIntent']['name'],
+                    slots,
+                    validation_result['violatedSlot'],
+                    validation_result['message']
+                )
             # prompt for zipcode
             return elicit_slot(
                 output_session_attributes,
@@ -506,7 +527,14 @@ def get_movies(intent_request):
         if not zipcode:
             if zipcode == False:
                 # user entered improperly-formatted zipcode -- need to correct
-                return build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                validation_result = build_validation_result(False, 'zipcode', 'Whoops! You entered an invalid zip code. What is your zip code?')
+                return elicit_slot(
+                    output_session_attributes,
+                    intent_request['currentIntent']['name'],
+                    slots,
+                    validation_result['violatedSlot'],
+                    validation_result['message']
+                )
             # prompt for zipcode
             return elicit_slot(
                 output_session_attributes,
