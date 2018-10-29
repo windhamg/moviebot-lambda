@@ -232,8 +232,20 @@ def get_movie_detail(intent_request):
             runtime = result['runtime']
             release_date = arrow.get(result['release_date']).format('ddd, MMM Do YYYY')
 
+        # get stars and director
+        r = requests.get("https://api.themoviedb.org/3/movie/%s/credits" % best_id, params={'api_key': os.environ['TMDB_API_KEY']})
+        if r.status_code == 200 and r.text:
+            result = r.json()
+            stars = []
+            directors = []
+            cast = result['cast']
+            for i in range(0, min(len(cast), 3)):
+                stars.append(cast[i]['name'])
+            for c in result['crew']:
+                if c['department'] == 'Directing' and c['job'] == 'Director':
+                    directors.append(c['name'])
     if best_id:
-        content = "Here is some info for *%s*:\n_Release date_: %s\n_Runtime_: %d mins\n_Rating_: %s" % (best_title, release_date, runtime, rating)
+        content = "Here is some info for *%s*:\n_Starring_: %s\n_Directed by_: %s\n_Release date_: %s\n_Runtime_: %d mins\n_Rating_: %s" % (best_title, ", ".join(stars), ", ".join(directors), release_date, runtime, rating)
     else:
         content = "I'm sorry, I can't find any info for *%s*" % movie_title
     return close(
@@ -308,18 +320,24 @@ def get_showtimes(intent_request):
                     if prob > best_sim:
                         best_sim = prob
                         best_theater = s['theatre']['name']
-        showtimes = []
+        showtimes = {}
         # find showings of movies matching our best-guessed movie playing
         # at our best-guessed theater
         for m in movies:
             if m['title'] == best_title:
                 for s in m['showtimes']:
                     if s['theatre']['name'] == best_theater:
-                        showtimes.append(arrow.get(s['dateTime'], 'YYYY-MM-DDTHH:mm').format('ddd, MMM Do @ h:mm a'))
-
+                        showtime = arrow.get(s['dateTime'], 'YYYY-MM-DDTHH:mm')
+                        showtime_key = showtime.format('YYYY-MM-DD')
+                        if showtime_key in showtimes:
+                            showtimes[showtime_key].append(showtime.format('h:mm a'))
+                        else:
+                            showtimes[showtime_key] = [showtime.format('h:mm a')]
     if len(showtimes) > 0:
-        showtimes_list = "\n".join(["* %s" % t for t in showtimes])
-        content = "*%s* is showing at %s at the following times:\n```%s```" % (best_title, best_theater, showtimes_list)
+        showtimes_list = []
+        for s in sorted(showtimes.iterkeys()):
+            showtimes_list.append("*%s*\n```%s```" % (arrow.get(s, 'YYYY-MM-DD').format('ddd, MMM Do'), "\n".join(showtimes[s])))
+        content = "*%s* is showing at %s at the following times:\n%s" % (best_title, best_theater, "\n".join(showtimes_list))
     else:
         content = "I'm sorry, I can't find any showtimes for *%s* at %s" % (best_title, best_theater)
     return close(
