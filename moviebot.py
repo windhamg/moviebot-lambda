@@ -1,22 +1,20 @@
-"""
- This code sample demonstrates an implementation of the Lex Code Hook Interface
- in order to serve a bot which allows users to get movie times, locations and information.
-"""
+###
+### This code sample demonstrates an implementation of the Lex Code Hook Interface
+### in order to serve a bot which allows users to get movie times, locations and information.
+###
 
-import json
 import os
 import re
 import arrow
 import logging
 import requests
 from difflib import SequenceMatcher
-from pprint import pprint
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
 
-""" --- Helpers to build responses which match the structure of the necessary dialog actions --- """
+### --- Helpers to build responses which match the structure of the necessary dialog actions --- ###
 
 
 def elicit_slot(session_attributes, intent_name, slots, slot_to_elicit, message=None, response_card=None):
@@ -33,7 +31,6 @@ def elicit_slot(session_attributes, intent_name, slots, slot_to_elicit, message=
         response['dialogAction']['message'] = message
     if response_card:
         response['dialogAction']['responseCard'] = response_card
-
     return response
 
 
@@ -48,7 +45,6 @@ def elicit_intent(session_attributes, intent_name, message=None, response_card=N
         response['dialogAction']['message'] = message
     if response_card:
         response['dialogAction']['responseCard'] = response_card
-
     return response
 
 
@@ -65,7 +61,6 @@ def confirm_intent(session_attributes, intent_name, slots, message=None, respons
         response['dialogAction']['message'] = message
     if response_card:
         response['dialogAction']['responseCard'] = response_card
-
     return response
 
 
@@ -78,7 +73,6 @@ def close(session_attributes, fulfillment_state, message):
             'message': message
         }
     }
-
     return response
 
 
@@ -93,9 +87,9 @@ def delegate(session_attributes, slots):
 
 
 def build_response_card(title, subtitle, options):
-    """
-    Build one or more responseCards with a title, subtitle, and an optional set of options which should be displayed as buttons.
-    """
+    ###
+    ### Build one or more responseCards with a title, subtitle, and an optional set of options which should be displayed as buttons.
+    ###
     attachments = []
     # Lex permits max 5 buttons per card
     cnt = int(len(options) / 5)
@@ -125,13 +119,13 @@ def build_response_card(title, subtitle, options):
     }
 
 
-""" --- Helper Functions --- """
+### --- Helper Functions --- ###
 
 
 def similar(a, b):
-    """
-    Help function which returns probability if 2 strings are similar (using difflib)
-    """
+    ###
+    ### Help function which returns probability if 2 strings are similar (using difflib)
+    ###
     return SequenceMatcher(None, a, b).ratio()
 
 
@@ -163,13 +157,13 @@ def validate_zipcode(slots, output_session_attributes):
     return [zipcode, output_session_attributes]
 
 
-""" --- Functions that control the bot's behavior --- """
+### --- Functions that control the bot's behavior --- ###
 
 
 def help(intent_request):
-    """
-    Returns help information and examples for bot
-    """
+    ###
+    ### Returns help information and examples for bot
+    ###
     examples = [
         "  * What movies are out right now?",
         "  * What movies are playing near _zipcode_?",
@@ -189,11 +183,12 @@ def help(intent_request):
         }
     )
 
+
 def get_movie_detail(intent_request):
-    """
-    Performs dialog management and fulfillment for retrieving info
-    for a particular movie.
-    """
+    ###
+    ### Performs dialog management and fulfillment for retrieving info
+    ### for a particular movie.
+    ###
     movie_title = intent_request['currentIntent']['slots']['movie_title']
     source = intent_request['invocationSource']
     output_session_attributes = intent_request['sessionAttributes']
@@ -232,7 +227,7 @@ def get_movie_detail(intent_request):
             runtime = result['runtime']
             release_date = arrow.get(result['release_date']).format('ddd, MMM Do YYYY')
 
-        # get stars and director
+        # get stars and directors
         r = requests.get("https://api.themoviedb.org/3/movie/%s/credits" % best_id, params={'api_key': os.environ['TMDB_API_KEY']})
         if r.status_code == 200 and r.text:
             result = r.json()
@@ -259,10 +254,10 @@ def get_movie_detail(intent_request):
 
 
 def get_showtimes(intent_request):
-    """
-    Performs dialog management and fulfillment for finding showtimes for a
-    (movie, theater) pair.
-    """
+    ###
+    ### Performs dialog management and fulfillment for finding showtimes for a
+    ### (movie, theater) pair.
+    ###
     source = intent_request['invocationSource']
     slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
@@ -297,8 +292,8 @@ def get_showtimes(intent_request):
     zipcode = output_session_attributes['zipcode']
 
     # send API request to get movie info
-    start_date = arrow.utcnow().to('-07:00').format('YYYY-MM-DD')
-    r = requests.get('http://data.tmsapi.com/v1.1/movies/showings', params={'startDate': start_date, 'zip': zipcode, 'numDays': 3, 'api_key': os.environ['TMS_API_KEY']})
+    start_date = arrow.utcnow().to('-07:00')
+    r = requests.get('http://data.tmsapi.com/v1.1/movies/showings', params={'startDate': start_date.format('YYYY-MM-DD'), 'zip': zipcode, 'numDays': 3, 'api_key': os.environ['TMS_API_KEY']})
     if r.status_code == 200 and r.text:
         movies = r.json()
         best_sim = 0
@@ -327,15 +322,16 @@ def get_showtimes(intent_request):
             if m['title'] == best_title:
                 for s in m['showtimes']:
                     if s['theatre']['name'] == best_theater:
-                        showtime = arrow.get(s['dateTime'], 'YYYY-MM-DDTHH:mm')
-                        showtime_key = showtime.format('YYYY-MM-DD')
-                        if showtime_key in showtimes:
-                            showtimes[showtime_key].append(showtime.format('h:mm a'))
-                        else:
-                            showtimes[showtime_key] = [showtime.format('h:mm a')]
+                        showtime = arrow.Arrow.strptime(s['dateTime'], '%Y-%m-%dT%H:%M', '-07:00')
+                        if showtime > start_date:
+                            showtime_key = showtime.format('YYYY-MM-DD')
+                            if showtime_key in showtimes:
+                                showtimes[showtime_key].append(showtime.format('h:mm a'))
+                            else:
+                                showtimes[showtime_key] = [showtime.format('h:mm a')]
     if len(showtimes) > 0:
         showtimes_list = []
-        for s in sorted(showtimes.iterkeys()):
+        for s in sorted(showtimes.keys()):
             showtimes_list.append("*%s*\n```%s```" % (arrow.get(s, 'YYYY-MM-DD').format('ddd, MMM Do'), "\n".join(showtimes[s])))
         content = "*%s* is showing at %s at the following times:\n%s" % (best_title, best_theater, "\n".join(showtimes_list))
     else:
@@ -351,10 +347,10 @@ def get_showtimes(intent_request):
 
 
 def find_movie(intent_request):
-    """
-    Performs dialog management and fulfillment for finding a particular movie
-    playing in a zip code area.
-    """
+    ###
+    ### Performs dialog management and fulfillment for finding a particular movie
+    ### playing in a zip code area.
+    ###
     source = intent_request['invocationSource']
     slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
@@ -440,10 +436,10 @@ def find_movie(intent_request):
 
 
 def get_theater_movies(intent_request):
-    """
-    Performs dialog management and fulfillment for finding movies playing at a
-    particular theater in a zip code area.
-    """
+    ###
+    ### Performs dialog management and fulfillment for finding movies playing at a
+    ### particular theater in a zip code area.
+    ###
     source = intent_request['invocationSource']
     slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
@@ -531,10 +527,10 @@ def get_theater_movies(intent_request):
 
 
 def get_movies(intent_request):
-    """
-    Performs dialog management and fulfillment for listing all movies playing in
-    a zip code area.
-    """
+    ###
+    ### Performs dialog management and fulfillment for listing all movies playing in
+    ### a zip code area.
+    ###
     source = intent_request['invocationSource']
     slots = intent_request['currentIntent']['slots']
     output_session_attributes = intent_request['sessionAttributes']
@@ -606,13 +602,13 @@ def get_movies(intent_request):
     )
 
 
-""" --- Intents --- """
+### --- Intents --- ###
 
 
 def dispatch(intent_request):
-    """
-    Called when the user specifies an intent for this bot.
-    """
+    ###
+    ### Called when the user specifies an intent for this bot.
+    ###
 
     logger.debug('dispatch userId={}, intentName={}'.format(intent_request['userId'], intent_request['currentIntent']['name']))
 
@@ -634,15 +630,14 @@ def dispatch(intent_request):
     raise Exception('Intent with name ' + intent_name + ' not supported')
 
 
-""" --- Main handler --- """
+### --- Main handler --- ###
 
 
 def lambda_handler(event, context):
-    """
-    Route the incoming request based on intent.
-    The JSON body of the request is provided in the event slot.
-    """
+    ###
+    ### Route the incoming request based on intent.
+    ### The JSON body of the request is provided in the event slot.
+    ###
 
     logger.debug('event.bot.name={}'.format(event['bot']['name']))
-    pprint(event)
     return dispatch(event)
